@@ -4,6 +4,7 @@ import time
 from typing import List, Dict, Any, Optional, Tuple
 from vault_crypto import VaultCrypto
 from vision_extractor import VisionExtractor
+from pico_bridge import PicoTyperBridge
 
 DEFAULT_VAULT_PATH = os.path.expanduser("~/.omnivault/vault.enc")
 
@@ -18,6 +19,9 @@ class VaultManager:
         self.entries: List[Dict[str, Any]] = []
         self.is_unlocked: bool = False
         self.vision_extractor = VisionExtractor()
+        self.pico_bridge = PicoTyperBridge()
+        # Automatically connect to Pico on startup if available
+        self.pico_bridge.connect_serial()
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(self.vault_path), exist_ok=True)

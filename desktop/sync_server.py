@@ -43,6 +43,11 @@ class SyncServerHandler(http.server.BaseHTTPRequestHandler):
                 return
             envelope = self.vault_manager.get_encrypted_envelope()
             self._send_json(200, envelope)
+        elif self.path == "/api/pico/status":
+            if hasattr(self.vault_manager, "pico_bridge") and self.vault_manager.pico_bridge:
+                self._send_json(200, self.vault_manager.pico_bridge.get_status())
+            else:
+                self._send_json(200, {"online": False, "mode": "Unavailable"})
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
@@ -88,6 +93,25 @@ class SyncServerHandler(http.server.BaseHTTPRequestHandler):
                         os.unlink(tmp_path)
             except Exception as e:
                 self._send_json(500, {"error": f"Vision extraction failed: {str(e)}"})
+
+        elif self.path == "/api/pico/type":
+            # Remote trigger from Android to inject credentials into computer via Pico HID
+            try:
+                payload = json.loads(post_data.decode("utf-8"))
+                label = payload.get("label", "Mobile App")
+                text_to_type = payload.get("text", "")
+                auto_enter = payload.get("auto_enter", False)
+                if not text_to_type:
+                    self._send_json(400, {"error": "text is required"})
+                    return
+
+                if hasattr(self.vault_manager, "pico_bridge") and self.vault_manager.pico_bridge:
+                    ok, msg = self.vault_manager.pico_bridge.trigger_type_credential(label, text_to_type, auto_enter)
+                    self._send_json(200 if ok else 500, {"success": ok, "message": msg})
+                else:
+                    self._send_json(503, {"error": "Pico bridge not connected"})
+            except Exception as e:
+                self._send_json(500, {"error": f"Failed to type via Pico: {str(e)}"})
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 

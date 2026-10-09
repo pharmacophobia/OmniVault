@@ -91,4 +91,28 @@ class NetworkClient(private val context: Context) {
             null
         }
     }
+
+    suspend fun triggerPicoType(serverHost: String, label: String, passwordText: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().apply {
+                put("label", label)
+                put("text", passwordText)
+                put("auto_enter", false)
+            }
+            val url = "http://$serverHost:8765/api/pico/type"
+            val body = payload.toString().toRequestBody("application/json".toMediaType())
+            val request = Request.Builder().url(url).post(body).build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful && response.body != null) {
+                    val respJson = JSONObject(response.body!!.string())
+                    Pair(respJson.optBoolean("success", true), respJson.optString("message", "Injected via Pico!"))
+                } else {
+                    Pair(false, "Server returned HTTP ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            Pair(false, "Pico inject error: ${e.message}")
+        }
+    }
 }

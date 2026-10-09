@@ -237,6 +237,10 @@ class OmniVaultApp(QMainWindow):
 
         header_layout.addStretch()
 
+        self.pico_badge = QLabel("⚡ Pico Typer: Checking...")
+        self.pico_badge.setStyleSheet("background-color: #313244; color: #a6e3a1; font-weight: bold; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+        header_layout.addWidget(self.pico_badge)
+
         self.network_label = QLabel(f"📡 Sync Server: 0.0.0.0:8765")
         self.network_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
         header_layout.addWidget(self.network_label)
@@ -285,6 +289,12 @@ class OmniVaultApp(QMainWindow):
         self.screenshot_btn.setStyleSheet("background-color: #fab387; color: #11111b;")
         self.screenshot_btn.clicked.connect(self._import_screenshot_dialog)
         toolbar_layout.addWidget(self.screenshot_btn)
+
+        self.pico_sync_btn = QPushButton("⚡ Sync to Pico Flash")
+        self.pico_sync_btn.setStyleSheet("background-color: #f9e2af; color: #11111b;")
+        self.pico_sync_btn.setToolTip("Upload top vault passwords into Pico 2W Flash memory for standalone keyboard typing")
+        self.pico_sync_btn.clicked.connect(self._sync_to_pico_flash)
+        toolbar_layout.addWidget(self.pico_sync_btn)
 
         self.pw_gen_btn = QPushButton("🎲 Gen Password")
         self.pw_gen_btn.clicked.connect(self._open_pw_gen)
@@ -349,6 +359,7 @@ class OmniVaultApp(QMainWindow):
         self.unlock_btn.setVisible(False)
         self.lock_btn.setVisible(True)
         self.toolbar_widget.setEnabled(True)
+        self._refresh_pico_status()
         self._render_entries()
 
     def _handle_lock(self):
@@ -409,6 +420,12 @@ class OmniVaultApp(QMainWindow):
             copy_pw_btn.setStyleSheet("background-color: #89b4fa; color: #11111b;")
             copy_pw_btn.clicked.connect(lambda _, p=entry.get("password", ""): self._copy_to_clipboard(p, "Password"))
             b_layout.addWidget(copy_pw_btn)
+
+            pico_type_btn = QPushButton("⚡ Type")
+            pico_type_btn.setToolTip("Type password directly into active PC cursor via Pico USB HID keyboard")
+            pico_type_btn.setStyleSheet("background-color: #fab387; color: #11111b; font-weight: bold;")
+            pico_type_btn.clicked.connect(lambda _, e=entry: self._type_via_pico(e))
+            b_layout.addWidget(pico_type_btn)
 
             edit_btn = QPushButton("✏️")
             edit_btn.setToolTip("Edit Entry")
@@ -509,7 +526,61 @@ class OmniVaultApp(QMainWindow):
         self.screenshot_btn.setEnabled(True)
         QMessageBox.critical(self, "Vision Extraction Error", f"Failed to extract credentials from image:\n{err_msg}")
 
+    def _type_via_pico(self, entry: dict):
+        pwd = entry.get("password", "")
+        service = entry.get("service", "Account")
+        if not pwd:
+            QMessageBox.warning(self, "No Password", "This entry does not have a password to type.")
+            return
+
+        bridge = self.vault_manager.pico_bridge
+        if not bridge.is_connected_serial():
+            ok, msg = bridge.connect_serial()
+            if not ok:
+                QMessageBox.warning(self, "Pico Disconnected", f"Could not connect to Pico 2W:\n{msg}\nPlease ensure it is plugged in via USB.")
+                self._refresh_pico_status()
+                return
+
+        ok, msg = bridge.trigger_type_credential(service, pwd, auto_enter=False)
+        if ok:
+            self.statusBar().showMessage(f"⚡ Injected {service} password into PC cursor via Pico!", 4000)
+        else:
+            QMessageBox.critical(self, "Typing Error", f"Pico failed to type password:\n{msg}")
+
+    def _sync_to_pico_flash(self):
+        bridge = self.vault_manager.pico_bridge
+        if not bridge.is_connected_serial():
+            ok, msg = bridge.connect_serial()
+            if not ok:
+                QMessageBox.warning(self, "Pico Disconnected", f"Could not connect to Pico 2W:\n{msg}")
+                self._refresh_pico_status()
+                return
+
+        reply = QMessageBox.question(
+            self, "Sync to Pico Memory",
+            "This will flash your active vault credentials into the Pico 2W's internal Flash memory, "
+            "allowing you to cycle and type them standalone with the Pico display & buttons without the PC app running.\n\nProceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            count, msg = bridge.sync_vault_to_pico(self.vault_manager.entries)
+            QMessageBox.information(self, "Pico Flash Sync", msg)
+            self._refresh_pico_status()
+
+    def _refresh_pico_status(self):
+        status = self.vault_manager.pico_bridge.get_status()
+        if status.get("online"):
+            dev = status.get("device", "Pico 2W")
+            cnt = status.get("count", 0)
+            mx = status.get("max", 32)
+            self.pico_badge.setText(f"⚡ Pico: {dev} ({cnt}/{mx})")
+            self.pico_badge.setStyleSheet("background-color: #313244; color: #a6e3a1; font-weight: bold; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+        else:
+            self.pico_badge.setText("⚡ Pico: Disconnected")
+            self.pico_badge.setStyleSheet("background-color: #313244; color: #f38ba8; font-weight: bold; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+
     def closeEvent(self, event):
+        self.vault_manager.pico_bridge.disconnect_serial()
         self.sync_server.stop()
         event.accept()
 

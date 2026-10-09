@@ -24,9 +24,14 @@
 - **🛡️ Military-Grade Cryptography**:
   - Full end-to-end client-side encryption using **AES-256-GCM** with **PBKDF2-HMAC-SHA256** key derivation (100,000 iterations, random 128-bit salt, 96-bit nonce).
   - Cross-compatible cryptographic format between Python Desktop and Kotlin Android.
+- **⚡ Raspberry Pi Pico Hardware Password Typer Integration**:
+  - Direct integration with the Raspberry Pi Pico 2W USB HID Password Typer (`pico_interface`).
+  - **1-Click Live Typing (`⚡ Type`)**: Inject credentials directly into any active PC cursor via USB HID keystroke simulation from either Desktop or Android!
+  - **Flash Sync (`⚡ Sync to Pico Flash`)**: Upload top vault passwords into Pico 2W onboard Flash memory to cycle and type passwords completely standalone using the Pico display and buttons without any PC application running!
 - **📱 Android App (Jetpack Compose + Material 3)**:
   - **Biometric Security**: Unlock with Fingerprint, Face ID, or system PIN via Android `androidx.biometric`.
   - **One-Tap Access**: Instant clipboard copy buttons for account names and passwords with auto-clear security.
+  - **Hardware Typing**: Tap `⚡ Type` directly from your Android phone to command your connected Pico 2W to type the password into your computer over Wi-Fi!
   - **Integrated Password Generator**: Tunable entropy generator (uppercase, lowercase, numbers, symbols, ambiguous character filtering) with real-time strength indicators.
   - **Direct Wi-Fi P2P Sync**: Sync encrypted database directly with your desktop over local Wi-Fi.
 - **🖥️ Desktop App (PyQt6)**:
@@ -34,6 +39,7 @@
   - Built-in lightweight P2P Sync HTTP server (`:8765`).
   - Direct Drag & Drop / File import for credential screenshots.
   - Built-in visual password generator.
+  - Live Pico hardware status monitor (`⚡ Pico: pico2_w (8/32)`).
 
 ---
 

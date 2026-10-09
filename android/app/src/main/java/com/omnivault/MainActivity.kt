@@ -370,6 +370,12 @@ fun OmniVaultApp(
                                     entry = entry,
                                     onCopyAccount = { onCopyToClipboard("Username", entry.account) },
                                     onCopyPassword = { onCopyToClipboard("Password", entry.password) },
+                                    onTypeViaPico = {
+                                        coroutineScope.launch {
+                                            val (ok, msg) = networkClient.triggerPicoType(desktopHost, entry.service, entry.password)
+                                            errorMessage = msg
+                                        }
+                                    },
                                     onEdit = {
                                         editingEntry = entry
                                         showAddDialog = true
@@ -421,6 +427,7 @@ fun CredentialCard(
     entry: VaultEntry,
     onCopyAccount: () -> Unit,
     onCopyPassword: () -> Unit,
+    onTypeViaPico: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -499,6 +506,14 @@ fun CredentialCard(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Text("Copy Pass", fontSize = 11.sp, color = Color(0xFF11111B), fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Button(
+                        onClick = onTypeViaPico,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFAB387))
+                    ) {
+                        Text("⚡ Type", fontSize = 11.sp, color = Color(0xFF11111B), fontWeight = FontWeight.Bold)
                     }
                 }
             }
