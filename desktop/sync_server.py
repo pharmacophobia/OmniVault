@@ -112,6 +112,42 @@ class SyncServerHandler(http.server.BaseHTTPRequestHandler):
                     self._send_json(503, {"error": "Pico bridge not connected"})
             except Exception as e:
                 self._send_json(500, {"error": f"Failed to type via Pico: {str(e)}"})
+
+        elif self.path == "/api/scrape/import":
+            # Mobile app uploads raw scraped file / text to import into active vault
+            try:
+                payload = json.loads(post_data.decode("utf-8"))
+                raw_content = payload.get("content", "")
+                if not raw_content:
+                    self._send_json(400, {"error": "content is required"})
+                    return
+
+                from phone_scraper import PhoneDataScraper
+                scraped = PhoneDataScraper.scrape_from_string(raw_content)
+                if not scraped:
+                    self._send_json(400, {"error": "No valid credentials found in uploaded content"})
+                    return
+
+                added_count = 0
+                if self.vault_manager and self.vault_manager.is_unlocked:
+                    for item in scraped:
+                        self.vault_manager.add_entry(
+                            service=item.get("service", "Imported"),
+                            account=item.get("account", ""),
+                            password=item.get("password", ""),
+                            url=item.get("url", ""),
+                            notes=item.get("notes", "")
+                        )
+                        added_count += 1
+
+                self._send_json(200, {
+                    "status": "success",
+                    "count": len(scraped),
+                    "added_to_vault": added_count,
+                    "items": scraped
+                })
+            except Exception as e:
+                self._send_json(500, {"error": f"Import failed: {str(e)}"})
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 

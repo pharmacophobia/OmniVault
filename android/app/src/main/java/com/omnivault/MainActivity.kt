@@ -139,15 +139,28 @@ fun OmniVaultApp(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
 
-    // Dialog states
     var showAddDialog by remember { mutableStateOf(false) }
     var showGenDialog by remember { mutableStateOf(false) }
     var showSyncDialog by remember { mutableStateOf(false) }
+    var showScrapeDialog by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<VaultEntry?>(null) }
     var desktopHost by remember { mutableStateOf("10.0.12.97") } // default subnet IP
     var isProcessingVision by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
+
+    // File scraper launcher (CSV, JSON, TXT)
+    val fileScraperLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                errorMessage = "Importing password export from phone storage..."
+                val imported = repository.importFromExportFile(uri)
+                errorMessage = if (imported > 0) "Imported $imported credentials from phone export!" else "No valid credentials found in selected file."
+            }
+        }
+    }
 
     // Screenshot picker launcher
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -187,6 +200,9 @@ fun OmniVaultApp(
                 },
                 actions = {
                     if (isUnlocked) {
+                        IconButton(onClick = { fileScraperLauncher.launch("*/*") }) {
+                            Icon(Icons.Default.FileDownload, contentDescription = "Import Stored Phone Passwords", tint = MaterialTheme.colorScheme.secondary)
+                        }
                         IconButton(onClick = { showGenDialog = true }) {
                             Icon(Icons.Default.Casino, contentDescription = "Password Generator")
                         }

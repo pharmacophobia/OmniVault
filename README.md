@@ -24,6 +24,11 @@
 - **🛡️ Military-Grade Cryptography**:
   - Full end-to-end client-side encryption using **AES-256-GCM** with **PBKDF2-HMAC-SHA256** key derivation (100,000 iterations, random 128-bit salt, 96-bit nonce).
   - Cross-compatible cryptographic format between Python Desktop and Kotlin Android.
+- **📥 Phone Data Scraper & Password Importer**:
+  - Automatically scrapes, extracts, and imports stored credentials from your mobile phone.
+  - **Browser & Manager Formats**: Ingests exports from **Chrome (Google Password Manager)**, **Samsung Internet**, **Firefox**, **Bitwarden**, **1Password**, and plain-text lists.
+  - **Direct USB / Wireless ADB Scraper**: 1-click auto-scan on Desktop that pulls exported credential files directly from your phone's storage over USB or wireless debugging.
+  - **Mobile In-App Importer**: Tap the `📥` button in the Android app to pick any exported CSV/JSON directly from your phone's downloads and import it instantly into your encrypted vault.
 - **⚡ Raspberry Pi Pico Hardware Password Typer Integration**:
   - Direct integration with the Raspberry Pi Pico 2W USB HID Password Typer (`pico_interface`).
   - **1-Click Live Typing (`⚡ Type`)**: Inject credentials directly into any active PC cursor via USB HID keystroke simulation from either Desktop or Android!
@@ -40,6 +45,7 @@
   - Direct Drag & Drop / File import for credential screenshots.
   - Built-in visual password generator.
   - Live Pico hardware status monitor (`⚡ Pico: pico2_w (8/32)`).
+  - 1-Click Phone Scraper & Importer modal.
 
 ---
 

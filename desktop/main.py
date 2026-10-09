@@ -195,6 +195,107 @@ class PasswordGenDialog(QDialog):
         QApplication.clipboard().setText(self.result_display.text())
         QMessageBox.information(self, "Copied", "Password copied to clipboard!")
 
+class PhoneScraperDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("📥 Phone Data Scraper & Importer")
+        self.setMinimumWidth(550)
+        self.setMinimumHeight(450)
+        self.setStyleSheet("""
+            QDialog { background-color: #1e1e2e; color: #cdd6f4; }
+            QLabel { color: #cdd6f4; font-size: 13px; }
+            QTextEdit { background-color: #313244; color: #ffffff; font-family: monospace; border: 1px solid #45475a; border-radius: 6px; padding: 8px; }
+            QPushButton { background-color: #89b4fa; color: #11111b; font-weight: bold; border-radius: 6px; padding: 8px 14px; }
+        """)
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel("📥 Import Stored Credentials from Phone")
+        title.setFont(QFont("Arial", 13, QFont.Weight.Bold))
+        title.setStyleSheet("color: #cba6f7;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "Import passwords exported from Chrome, Samsung Internet, Firefox, Bitwarden, or 1Password on your phone.\n"
+            "Choose a method below:"
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        layout.addWidget(desc)
+
+        btn_row = QHBoxLayout()
+        self.file_btn = QPushButton("📁 Select Export File (CSV / JSON)")
+        self.file_btn.clicked.connect(self._select_file)
+        btn_row.addWidget(self.file_btn)
+
+        self.adb_btn = QPushButton("🔌 Auto-Scan Phone via USB (ADB)")
+        self.adb_btn.setStyleSheet("background-color: #fab387; color: #11111b;")
+        self.adb_btn.clicked.connect(self._scan_adb)
+        btn_row.addWidget(self.adb_btn)
+        layout.addLayout(btn_row)
+
+        layout.addWidget(QLabel("Or Paste Raw Export / Text Dump Here:"))
+        self.text_input = QTextEdit()
+        self.text_input.setPlaceholderText("Paste CSV, JSON, or list of 'Website, username, password'...")
+        layout.addWidget(self.text_input)
+
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        layout.addWidget(self.status_label)
+
+        action_row = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("background-color: #f38ba8; color: #11111b;")
+        self.cancel_btn.clicked.connect(self.reject)
+        action_row.addWidget(self.cancel_btn)
+
+        self.import_btn = QPushButton("Parse & Import to Vault")
+        self.import_btn.setStyleSheet("background-color: #a6e3a1; color: #11111b;")
+        self.import_btn.clicked.connect(self._do_import)
+        action_row.addWidget(self.import_btn)
+
+        layout.addLayout(action_row)
+        self.scraped_entries = []
+
+    def _select_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Password Export File", "", "Supported Files (*.csv *.json *.txt);;All Files (*)"
+        )
+        if not file_path:
+            return
+        from phone_scraper import PhoneDataScraper
+        self.scraped_entries = PhoneDataScraper.scrape_from_file(file_path)
+        self.status_label.setText(f"Loaded file: Parsed {len(self.scraped_entries)} credentials ready to import!")
+        self.text_input.setPlainText(f"# Loaded from {file_path}:\n# Found {len(self.scraped_entries)} account entries.")
+
+    def _scan_adb(self):
+        self.status_label.setText("Scanning phone via ADB for exported credentials...")
+        from phone_scraper import PhoneDataScraper
+        ok, entries, msg = PhoneDataScraper.scrape_adb_phone()
+        if ok and entries:
+            self.scraped_entries = entries
+            self.status_label.setText(msg)
+            self.text_input.setPlainText(f"# Found {len(entries)} credentials from connected phone!")
+        else:
+            QMessageBox.information(self, "Phone Scan", msg)
+            self.status_label.setText("No exported files found via ADB. Export to Downloads or pick file manually.")
+
+    def _do_import(self):
+        if not self.scraped_entries:
+            text = self.text_input.toPlainText().strip()
+            if text and not text.startswith("#"):
+                from phone_scraper import PhoneDataScraper
+                self.scraped_entries = PhoneDataScraper.scrape_from_string(text)
+
+        if not self.scraped_entries:
+            QMessageBox.warning(self, "No Credentials", "No valid credentials found to import.")
+            return
+
+        self.accept()
+
+    def get_entries(self):
+        return self.scraped_entries
+
 class OmniVaultApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -295,6 +396,12 @@ class OmniVaultApp(QMainWindow):
         self.pico_sync_btn.setToolTip("Upload top vault passwords into Pico 2W Flash memory for standalone keyboard typing")
         self.pico_sync_btn.clicked.connect(self._sync_to_pico_flash)
         toolbar_layout.addWidget(self.pico_sync_btn)
+
+        self.scraper_btn = QPushButton("📥 Scrape Phone Info")
+        self.scraper_btn.setStyleSheet("background-color: #cba6f7; color: #11111b; font-weight: bold;")
+        self.scraper_btn.setToolTip("Import credentials from Phone browser exports (Chrome, Firefox, Bitwarden, CSV, JSON, ADB)")
+        self.scraper_btn.clicked.connect(self._open_phone_scraper_dialog)
+        toolbar_layout.addWidget(self.scraper_btn)
 
         self.pw_gen_btn = QPushButton("🎲 Gen Password")
         self.pw_gen_btn.clicked.connect(self._open_pw_gen)
@@ -496,6 +603,26 @@ class OmniVaultApp(QMainWindow):
     def _open_pw_gen(self):
         dlg = PasswordGenDialog(self)
         dlg.exec()
+
+    def _open_phone_scraper_dialog(self):
+        dlg = PhoneScraperDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            entries = dlg.get_entries()
+            added = 0
+            for item in entries:
+                self.vault_manager.add_entry(
+                    service=item.get("service", "Imported"),
+                    account=item.get("account", ""),
+                    password=item.get("password", ""),
+                    url=item.get("url", ""),
+                    notes=item.get("notes", "")
+                )
+                added += 1
+            self._render_entries()
+            QMessageBox.information(
+                self, "Import Successful",
+                f"Successfully imported {added} credentials from your phone into OmniVault!"
+            )
 
     def _import_screenshot_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
