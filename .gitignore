@@ -1,0 +1,13 @@
+# Build outputs
+android/app/build/
+android/.gradle/
+android/local.properties
+.gradle/
+build/
+__pycache__/
+*.pyc
+*.pyo
+
+# Allow direct download of compiled APK from repository root
+!OmniVault.apk
+test_screenshot*.png

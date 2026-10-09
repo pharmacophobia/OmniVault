@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Biometrics & Screen Security -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Local Wi-Fi sync to Desktop Vault Server -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Photo library / screenshot picker -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_lock_lock"
+        android:label="OmniVault"
+        android:roundIcon="@android:drawable/ic_lock_lock"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.OmniVault"
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.OmniVault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
