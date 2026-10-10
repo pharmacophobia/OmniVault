@@ -142,3 +142,11 @@ class VaultManager:
             self.save_vault()
             return True
         return False
+
+    def delete_entries_without_account(self) -> int:
+        initial_len = len(self.entries)
+        self.entries = [e for e in self.entries if e.get("account", "").strip()]
+        removed = initial_len - len(self.entries)
+        if removed > 0:
+            self.save_vault()
+        return removed

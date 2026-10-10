@@ -5,6 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.snapshots.SnapshotStateList
+
 data class VaultEntry(
     val id: String,
     val service: String,
@@ -17,8 +20,7 @@ data class VaultEntry(
 
 class VaultRepository(private val context: Context) {
     private val vaultFile = File(context.filesDir, "vault.enc")
-    var entries = mutableListOf<VaultEntry>()
-        private set
+    val entries: SnapshotStateList<VaultEntry> = mutableStateListOf<VaultEntry>()
     var isUnlocked: Boolean = false
         private set
     var activeMasterPassword: String? = null
@@ -167,6 +169,16 @@ class VaultRepository(private val context: Context) {
         return if (removed) save() else false
     }
 
+    fun deleteEntriesWithoutAccount(): Int {
+        val before = entries.size
+        entries.removeAll { it.account.trim().isEmpty() }
+        val removed = before - entries.size
+        if (removed > 0) {
+            save()
+        }
+        return removed
+    }
+
     private fun save(): Boolean {
         if (!isUnlocked || activeMasterPassword == null) return false
         return try {
@@ -207,7 +219,8 @@ class VaultRepository(private val context: Context) {
                 )
             )
         }
-        entries = list
+        entries.clear()
+        entries.addAll(list)
     }
 
     fun importFromExportFile(uri: android.net.Uri): Int {

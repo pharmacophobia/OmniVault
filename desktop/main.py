@@ -478,6 +478,12 @@ class OmniVaultApp(QMainWindow):
         self.pw_gen_btn.clicked.connect(self._open_pw_gen)
         toolbar_layout.addWidget(self.pw_gen_btn)
 
+        self.clean_empty_btn = QPushButton("🧹 Clean Empty")
+        self.clean_empty_btn.setStyleSheet("background-color: #f38ba8; color: #11111b; font-weight: bold;")
+        self.clean_empty_btn.setToolTip("Delete all credentials that have no account/username")
+        self.clean_empty_btn.clicked.connect(self._clean_empty_accounts)
+        toolbar_layout.addWidget(self.clean_empty_btn)
+
         self.update_btn = QPushButton("🔄 Updates")
         self.update_btn.setStyleSheet("background-color: #89b4fa; color: #11111b; font-weight: bold;")
         self.update_btn.setToolTip("Check for updates from GitHub and update OmniVault directly from inside the app")
@@ -676,6 +682,22 @@ class OmniVaultApp(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.vault_manager.delete_entry(entry_id)
             self._render_entries()
+
+    def _clean_empty_accounts(self):
+        empty_count = sum(1 for e in self.vault_manager.entries if not e.get("account", "").strip())
+        if empty_count == 0:
+            QMessageBox.information(self, "Clean Empty Accounts", "No credentials with missing account names found.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Clean Empty Accounts",
+            f"Found {empty_count} credentials with no account name.\nAre you sure you want to delete all of them permanently?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            removed = self.vault_manager.delete_entries_without_account()
+            self._render_entries()
+            QMessageBox.information(self, "Cleaned", f"Successfully deleted {removed} entries with no account name.")
 
     def _open_pw_gen(self):
         dlg = PasswordGenDialog(self)

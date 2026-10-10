@@ -144,6 +144,7 @@ fun OmniVaultApp(
     var showGenDialog by remember { mutableStateOf(false) }
     var showSyncDialog by remember { mutableStateOf(false) }
     var showScrapeDialog by remember { mutableStateOf(false) }
+    var showCleanEmptyDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -233,6 +234,9 @@ fun OmniVaultApp(
                     if (isUnlocked) {
                         IconButton(onClick = { fileScraperLauncher.launch("*/*") }) {
                             Icon(Icons.Default.FileDownload, contentDescription = "Import Stored Phone Passwords", tint = MaterialTheme.colorScheme.secondary)
+                        }
+                        IconButton(onClick = { showCleanEmptyDialog = true }) {
+                            Icon(Icons.Default.CleaningServices, contentDescription = "Delete Passwords with No Account Name", tint = Color(0xFFF38BA8))
                         }
                         IconButton(onClick = { showGenDialog = true }) {
                             Icon(Icons.Default.Casino, contentDescription = "Password Generator")
@@ -471,6 +475,48 @@ fun OmniVaultApp(
                     networkClient = networkClient,
                     repository = repository,
                     onDismiss = { showSyncDialog = false }
+                )
+            }
+
+            if (showCleanEmptyDialog) {
+                val emptyCount = repository.entries.count { it.account.trim().isEmpty() }
+                AlertDialog(
+                    onDismissRequest = { showCleanEmptyDialog = false },
+                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null, tint = Color(0xFFF38BA8)) },
+                    title = { Text("Delete Passwords with No Account") },
+                    text = {
+                        Text(
+                            if (emptyCount > 0)
+                                "Found $emptyCount credentials with no account name.\nAre you sure you want to delete all of them permanently?"
+                            else
+                                "No credentials with missing account names found."
+                        )
+                    },
+                    confirmButton = {
+                        if (emptyCount > 0) {
+                            Button(
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                onClick = {
+                                    val deleted = repository.deleteEntriesWithoutAccount()
+                                    errorMessage = "Deleted $deleted credentials with empty account names."
+                                    showCleanEmptyDialog = false
+                                }
+                            ) {
+                                Text("Delete All $emptyCount")
+                            }
+                        } else {
+                            Button(onClick = { showCleanEmptyDialog = false }) {
+                                Text("OK")
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        if (emptyCount > 0) {
+                            TextButton(onClick = { showCleanEmptyDialog = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
                 )
             }
 
