@@ -24,7 +24,74 @@ class VaultRepository(private val context: Context) {
     var activeMasterPassword: String? = null
         private set
 
+    private val prefs = context.getSharedPreferences("omnivault_prefs", Context.MODE_PRIVATE)
+    private val keyStoreAlias = "omnivault_master_key"
+
     fun hasVault(): Boolean = vaultFile.exists() && vaultFile.length() > 0
+
+    fun hasBiometricsEnrolledKey(): Boolean {
+        return prefs.contains("bio_enc_pwd") && prefs.contains("bio_iv")
+    }
+
+    private fun getOrCreateKeyStoreKey(): javax.crypto.SecretKey {
+        val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (!keyStore.containsAlias(keyStoreAlias)) {
+            val keyGenerator = javax.crypto.KeyGenerator.getInstance(
+                android.security.keystore.KeyProperties.KEY_ALGORITHM_AES,
+                "AndroidKeyStore"
+            )
+            val builder = android.security.keystore.KeyGenParameterSpec.Builder(
+                keyStoreAlias,
+                android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+            keyGenerator.init(builder.build())
+            return keyGenerator.generateKey()
+        }
+        val entry = keyStore.getEntry(keyStoreAlias, null) as java.security.KeyStore.SecretKeyEntry
+        return entry.secretKey
+    }
+
+    private fun storeMasterPasswordInKeyStore(masterPassword: String) {
+        try {
+            val secretKey = getOrCreateKeyStoreKey()
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey)
+            val iv = cipher.iv
+            val encryptedBytes = cipher.doFinal(masterPassword.toByteArray(Charsets.UTF_8))
+            prefs.edit()
+                .putString("bio_enc_pwd", android.util.Base64.encodeToString(encryptedBytes, android.util.Base64.NO_WRAP))
+                .putString("bio_iv", android.util.Base64.encodeToString(iv, android.util.Base64.NO_WRAP))
+                .apply()
+        } catch (e: Exception) {
+            // Log or ignore
+        }
+    }
+
+    private fun retrieveMasterPasswordFromKeyStore(): String? {
+        val encStr = prefs.getString("bio_enc_pwd", null) ?: return null
+        val ivStr = prefs.getString("bio_iv", null) ?: return null
+        return try {
+            val secretKey = getOrCreateKeyStoreKey()
+            val encBytes = android.util.Base64.decode(encStr, android.util.Base64.DEFAULT)
+            val iv = android.util.Base64.decode(ivStr, android.util.Base64.DEFAULT)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, spec)
+            val plainBytes = cipher.doFinal(encBytes)
+            String(plainBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun unlockWithBiometrics(): Boolean {
+        if (!hasVault()) return false
+        val pw = retrieveMasterPasswordFromKeyStore() ?: return false
+        return unlock(pw)
+    }
 
     fun getEncryptedEnvelope(): JSONObject? {
         if (!hasVault()) return null
@@ -45,6 +112,7 @@ class VaultRepository(private val context: Context) {
                 val decrypted = VaultCrypto.decrypt(envelope, masterPasswordIfKnown)
                 parseEntries(decrypted)
                 activeMasterPassword = masterPasswordIfKnown
+                storeMasterPasswordInKeyStore(masterPasswordIfKnown)
                 isUnlocked = true
             }
             vaultFile.writeText(envelope.toString(2))
@@ -61,6 +129,7 @@ class VaultRepository(private val context: Context) {
             val decryptedJson = VaultCrypto.decrypt(envelope, masterPassword)
             parseEntries(decryptedJson)
             activeMasterPassword = masterPassword
+            storeMasterPasswordInKeyStore(masterPassword)
             isUnlocked = true
             true
         } catch (e: Exception) {
@@ -71,6 +140,7 @@ class VaultRepository(private val context: Context) {
     fun createVault(masterPassword: String): Boolean {
         if (hasVault()) return false
         activeMasterPassword = masterPassword
+        storeMasterPasswordInKeyStore(masterPassword)
         entries.clear()
         isUnlocked = true
         return save()

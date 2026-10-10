@@ -318,11 +318,19 @@ fun OmniVaultApp(
                             onClick = {
                                 onRequestBiometrics(
                                     {
-                                        // On biometric success, if active master key cached or empty
-                                        if (repository.activeMasterPassword != null) {
+                                        if (repository.hasBiometricsEnrolledKey()) {
+                                            val ok = repository.unlockWithBiometrics()
+                                            if (ok) {
+                                                isUnlocked = true
+                                                errorMessage = null
+                                            } else {
+                                                errorMessage = "Could not unlock vault with stored biometric key. Please enter Master Password."
+                                            }
+                                        } else if (repository.activeMasterPassword != null) {
                                             isUnlocked = true
+                                            errorMessage = null
                                         } else {
-                                            errorMessage = "Please enter Master Password once to decrypt cryptographic keys."
+                                            errorMessage = "Please enter Master Password once to enable biometric unlocking."
                                         }
                                     },
                                     { err -> errorMessage = err }

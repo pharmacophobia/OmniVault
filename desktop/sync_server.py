@@ -173,6 +173,11 @@ class SyncServerHandler(http.server.BaseHTTPRequestHandler):
                         "message": msg,
                         "items": entries
                     })
+                else:
+                    self._send_json(400, {"status": "error", "message": msg})
+            except Exception as e:
+                self._send_json(500, {"error": f"ADB scrape failed: {str(e)}"})
+
         elif self.path == "/api/scrape/browsers":
             # Scrapes local desktop browsers (Brave, Chrome, Chromium, Edge)
             try:
