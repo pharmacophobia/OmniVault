@@ -71,13 +71,31 @@ class PicoTyperBridge:
         return self.ser is not None and self.ser.is_open
 
     def send_cmd(self, cmd: str) -> str:
+        # Check connection; if closed or missing, attempt reconnect
         if not self.is_connected_serial():
-            raise ConnectionError("Pico serial port not connected")
-        self.ser.reset_input_buffer()
-        self.ser.write((cmd.strip() + "\r\n").encode("utf-8"))
-        self.ser.flush()
-        line = self.ser.readline().decode("utf-8", errors="replace").strip()
-        return line
+            ok, _ = self.connect_serial()
+            if not ok:
+                raise ConnectionError("Pico serial port not connected")
+
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write((cmd.strip() + "\r\n").encode("utf-8"))
+            self.ser.flush()
+            line = self.ser.readline().decode("utf-8", errors="replace").strip()
+            return line
+        except (serial.SerialException, OSError) as e:
+            # Stale handle from reboot/flashing or unbind; re-open and retry once
+            self.disconnect_serial()
+            ok, _ = self.connect_serial()
+            if ok and self.ser and self.ser.is_open:
+                try:
+                    self.ser.reset_input_buffer()
+                    self.ser.write((cmd.strip() + "\r\n").encode("utf-8"))
+                    self.ser.flush()
+                    return self.ser.readline().decode("utf-8", errors="replace").strip()
+                except Exception as inner_e:
+                    raise inner_e
+            raise e
 
     def get_status(self) -> Dict[str, Any]:
         """Returns hardware status, stored script count, capacity, and IP."""
@@ -118,37 +136,43 @@ class PicoTyperBridge:
     def get_pico_scripts(self) -> List[Dict[str, Any]]:
         """Retrieves all macros currently stored in Pico memory."""
         if not self.is_connected_serial():
-            # Fallback to WiFi
-            try:
-                r = requests.get(f"{self.wifi_url}/api/scripts", timeout=2.0)
-                if r.status_code == 200:
-                    return r.json()
-            except Exception:
-                pass
-            return []
+            ok, _ = self.connect_serial()
+            if not ok:
+                # Fallback to WiFi
+                try:
+                    r = requests.get(f"{self.wifi_url}/api/scripts", timeout=2.0)
+                    if r.status_code == 200:
+                        return r.json()
+                except Exception:
+                    pass
+                return []
 
-        self.ser.reset_input_buffer()
-        self.ser.write(b"LIST\r\n")
-        self.ser.flush()
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write(b"LIST\r\n")
+            self.ser.flush()
 
-        scripts = []
-        header = self.ser.readline().decode("utf-8", errors="replace").strip()
-        if not header.startswith("SCRIPTS_START"):
+            scripts = []
+            header = self.ser.readline().decode("utf-8", errors="replace").strip()
+            if not header.startswith("SCRIPTS_START"):
+                return scripts
+
+            while True:
+                line = self.ser.readline().decode("utf-8", errors="replace").strip()
+                if not line or line == "SCRIPTS_END":
+                    break
+                parts = line.split("|", 4)
+                if len(parts) >= 5 and parts[0] == "SCRIPT":
+                    scripts.append({
+                        "id": int(parts[1]),
+                        "auto_enter": (parts[2] == "1"),
+                        "name": parts[3],
+                        "payload": parts[4]
+                    })
             return scripts
-
-        while True:
-            line = self.ser.readline().decode("utf-8", errors="replace").strip()
-            if not line or line == "SCRIPTS_END":
-                break
-            parts = line.split("|", 4)
-            if len(parts) >= 5 and parts[0] == "SCRIPT":
-                scripts.append({
-                    "id": int(parts[1]),
-                    "auto_enter": (parts[2] == "1"),
-                    "name": parts[3],
-                    "payload": parts[4]
-                })
-        return scripts
+        except Exception:
+            self.disconnect_serial()
+            return []
 
     def trigger_type_slot(self, slot_id: int) -> Tuple[bool, str]:
         """Tells the Pico to immediately type keystrokes from slot ID."""
