@@ -478,11 +478,17 @@ class OmniVaultApp(QMainWindow):
         self.pw_gen_btn.clicked.connect(self._open_pw_gen)
         toolbar_layout.addWidget(self.pw_gen_btn)
 
-        self.clean_empty_btn = QPushButton("🧹 Clean Empty")
-        self.clean_empty_btn.setStyleSheet("background-color: #f38ba8; color: #11111b; font-weight: bold;")
+        self.clean_empty_btn = QPushButton("🧹 No Username")
+        self.clean_empty_btn.setStyleSheet("background-color: #fab387; color: #11111b; font-weight: bold;")
         self.clean_empty_btn.setToolTip("Delete all credentials that have no account/username")
         self.clean_empty_btn.clicked.connect(self._clean_empty_accounts)
         toolbar_layout.addWidget(self.clean_empty_btn)
+
+        self.clean_no_pass_btn = QPushButton("🧹 No Passwords")
+        self.clean_no_pass_btn.setStyleSheet("background-color: #f38ba8; color: #11111b; font-weight: bold;")
+        self.clean_no_pass_btn.setToolTip("Delete all credentials that have no password")
+        self.clean_no_pass_btn.clicked.connect(self._clean_no_passwords)
+        toolbar_layout.addWidget(self.clean_no_pass_btn)
 
         self.update_btn = QPushButton("🔄 Updates")
         self.update_btn.setStyleSheet("background-color: #89b4fa; color: #11111b; font-weight: bold;")
@@ -699,6 +705,22 @@ class OmniVaultApp(QMainWindow):
             self._render_entries()
             QMessageBox.information(self, "Cleaned", f"Successfully deleted {removed} entries with no account name.")
 
+    def _clean_no_passwords(self):
+        empty_count = sum(1 for e in self.vault_manager.entries if not e.get("password", "").strip())
+        if empty_count == 0:
+            QMessageBox.information(self, "Clean Passwords", "All credentials have passwords. Nothing to clean.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Delete Accounts Without Passwords",
+            f"Found {empty_count} accounts with no saved password.\nAre you sure you want to delete all of them permanently?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            removed = self.vault_manager.delete_entries_without_passwords()
+            self._render_entries()
+            QMessageBox.information(self, "Cleaned", f"Successfully deleted {removed} accounts with no passwords.")
+
     def _open_pw_gen(self):
         dlg = PasswordGenDialog(self)
         dlg.exec()
@@ -726,7 +748,7 @@ class OmniVaultApp(QMainWindow):
     def _open_updater_dialog(self):
         from update_dialog import UpdateDialog
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        dlg = UpdateDialog(self, repo_dir=repo_root, app_name="OmniVault", current_version="1.0.0")
+        dlg = UpdateDialog(self, repo_dir=repo_root, app_name="OmniVault", current_version="1.1.0")
         dlg.exec()
 
     def _import_screenshot_dialog(self):

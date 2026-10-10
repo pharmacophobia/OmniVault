@@ -165,8 +165,22 @@ class VaultRepository(private val context: Context) {
     }
 
     fun deleteEntry(entryId: String): Boolean {
-        val removed = entries.removeAll { it.id == entryId }
-        return if (removed) save() else false
+        val idx = entries.indexOfFirst { it.id == entryId }
+        if (idx >= 0) {
+            entries.removeAt(idx)
+            return save()
+        }
+        return false
+    }
+
+    fun deleteEntriesWithoutPassword(): Int {
+        val before = entries.size
+        entries.removeAll { it.password.trim().isEmpty() }
+        val removed = before - entries.size
+        if (removed > 0) {
+            save()
+        }
+        return removed
     }
 
     fun deleteEntriesWithoutAccount(): Int {
@@ -223,6 +237,53 @@ class VaultRepository(private val context: Context) {
         entries.addAll(list)
     }
 
+    fun scanPhoneStorageForCredentials(): Int {
+        if (!isUnlocked || activeMasterPassword == null) return 0
+        var totalImported = 0
+        try {
+            val searchDirs = listOfNotNull(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+                File("/sdcard/Download"),
+                File("/sdcard/Documents"),
+                context.getExternalFilesDir(null)
+            )
+
+            val candidateFiles = mutableListOf<File>()
+            for (dir in searchDirs) {
+                if (dir.exists() && dir.canRead()) {
+                    dir.walkTopDown().maxDepth(2).forEach { file ->
+                        if (file.isFile && (
+                            file.name.contains("pass", ignoreCase = true) ||
+                            file.name.contains("login", ignoreCase = true) ||
+                            file.name.contains("export", ignoreCase = true) ||
+                            file.name.endsWith(".csv", ignoreCase = true) ||
+                            file.name.endsWith(".json", ignoreCase = true)
+                        )) {
+                            candidateFiles.add(file)
+                        }
+                    }
+                }
+            }
+
+            for (file in candidateFiles.distinctBy { it.absolutePath }) {
+                try {
+                    val content = file.readText()
+                    val parsed = parseImportString(content)
+                    for (entry in parsed) {
+                        val exists = entries.any { it.service.equals(entry.service, true) && it.account.equals(entry.account, true) }
+                        if (!exists && entry.password.isNotBlank()) {
+                            entries.add(entry)
+                            totalImported++
+                        }
+                    }
+                } catch (e: Exception) {}
+            }
+            if (totalImported > 0) save()
+        } catch (e: Exception) {}
+        return totalImported
+    }
+
     fun importFromExportFile(uri: android.net.Uri): Int {
         if (!isUnlocked || activeMasterPassword == null) return 0
         return try {
@@ -232,7 +293,7 @@ class VaultRepository(private val context: Context) {
             var count = 0
             for (entry in imported) {
                 val exists = entries.any { it.service.equals(entry.service, true) && it.account.equals(entry.account, true) }
-                if (!exists && (entry.account.isNotEmpty() || entry.password.isNotEmpty())) {
+                if (!exists && entry.password.isNotBlank()) {
                     entries.add(entry)
                     count++
                 }
@@ -244,7 +305,7 @@ class VaultRepository(private val context: Context) {
         }
     }
 
-    private fun parseImportString(text: String): List<VaultEntry> {
+    fun parseImportString(text: String): List<VaultEntry> {
         val result = mutableListOf<VaultEntry>()
         val trimmed = text.trim()
 
@@ -255,16 +316,19 @@ class VaultRepository(private val context: Context) {
                     val array = JSONArray(trimmed)
                     for (i in 0 until array.length()) {
                         val obj = array.getJSONObject(i)
-                        result.add(
-                            VaultEntry(
-                                id = "import_${System.currentTimeMillis()}_$i",
-                                service = obj.optString("service", obj.optString("name", "Imported")),
-                                account = obj.optString("account", obj.optString("username", "")),
-                                password = obj.optString("password", ""),
-                                url = obj.optString("url", ""),
-                                notes = obj.optString("notes", "")
+                        val pass = obj.optString("password", "")
+                        if (pass.isNotBlank()) {
+                            result.add(
+                                VaultEntry(
+                                    id = "import_${System.currentTimeMillis()}_$i",
+                                    service = obj.optString("service", obj.optString("name", "Imported")),
+                                    account = obj.optString("account", obj.optString("username", "")),
+                                    password = pass,
+                                    url = obj.optString("url", ""),
+                                    notes = obj.optString("notes", "")
+                                )
                             )
-                        )
+                        }
                     }
                     return result
                 } else {
@@ -276,7 +340,7 @@ class VaultRepository(private val context: Context) {
                             val login = it.optJSONObject("login")
                             val user = login?.optString("username", "") ?: ""
                             val pass = login?.optString("password", "") ?: ""
-                            if (user.isNotEmpty() || pass.isNotEmpty()) {
+                            if (pass.isNotBlank()) {
                                 result.add(
                                     VaultEntry(
                                         id = "import_${System.currentTimeMillis()}_$i",
@@ -309,7 +373,7 @@ class VaultRepository(private val context: Context) {
                 val account = if (userIdx in cols.indices) cols[userIdx] else ""
                 val password = if (passIdx in cols.indices) cols[passIdx] else ""
                 val notes = if (noteIdx in cols.indices) cols[noteIdx] else ""
-                if (account.isNotEmpty() || password.isNotEmpty()) {
+                if (password.isNotBlank()) {
                     result.add(
                         VaultEntry(
                             id = "import_${System.currentTimeMillis()}_$i",
@@ -338,7 +402,7 @@ class VaultRepository(private val context: Context) {
                 lower.startsWith("password:") || lower.startsWith("pass:") ->
                     currentPassword = line.substringAfter(":").trim()
             }
-            if (currentAccount.isNotEmpty() && currentPassword.isNotEmpty()) {
+            if (currentPassword.isNotBlank()) {
                 result.add(VaultEntry("import_${System.currentTimeMillis()}_$idx", currentService, currentAccount, currentPassword))
                 currentService = "Imported"
                 currentAccount = ""

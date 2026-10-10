@@ -14,7 +14,7 @@ class AppUpdater:
       2. GitHub Releases API tag comparison and binary download
       3. Seamless process restart on demand
     """
-    def __init__(self, repo_dir: str, github_repo: Optional[str] = None, current_version: str = "1.0.0"):
+    def __init__(self, repo_dir: str, github_repo: Optional[str] = None, current_version: str = "1.1.0"):
         self.repo_dir = os.path.abspath(repo_dir)
         self.github_repo = github_repo or self._detect_github_repo()
         self.current_version = current_version.lstrip("v")

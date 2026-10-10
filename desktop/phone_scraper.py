@@ -52,7 +52,7 @@ class PhoneDataScraper:
                 # Notes
                 notes = norm_row.get("notes") or norm_row.get("note") or ""
 
-                if service or account or password:
+                if password and password.strip():
                     results.append({
                         "service": service or "Imported Account",
                         "account": account,
@@ -80,7 +80,7 @@ class PhoneDataScraper:
                     notes = item.get("notes", "")
                     uris = login.get("uris", [])
                     url = uris[0].get("uri", "") if uris else ""
-                    if account or password:
+                    if password and password.strip():
                         results.append({
                             "service": name,
                             "account": account,
@@ -99,7 +99,7 @@ class PhoneDataScraper:
                         password = item.get("password") or item.get("pass") or ""
                         url = item.get("url") or ""
                         notes = item.get("notes") or ""
-                        if account or password:
+                        if password and password.strip():
                             results.append({
                                 "service": service,
                                 "account": account,
@@ -366,10 +366,13 @@ class PhoneDataScraper:
                     browser_name = "Edge"
 
                 for origin_url, username, pass_blob in rows:
-                    if not username and not pass_blob:
+                    if not pass_blob:
                         continue
                     
                     plain_pass = decrypt_chromium_pass(pass_blob)
+                    if not plain_pass or not plain_pass.strip():
+                        continue
+
                     # Extract domain for service name
                     d_match = re.search(r"https?://(?:www\.)?([^/:\?]+)", origin_url or "")
                     service_name = d_match.group(1).capitalize() if d_match else browser_name
@@ -387,9 +390,38 @@ class PhoneDataScraper:
                 if os.path.exists(tmp_db):
                     os.unlink(tmp_db)
 
-        if not results:
-            return False, [], "No browser logins found or databases were empty. Make sure credentials are saved in your desktop browser or export them to CSV."
+        # Also search Downloads, Documents, Desktop for exported password files
+        search_dirs = [f"{home}/Downloads", f"{home}/Documents", f"{home}/Desktop", home]
+        for sdir in search_dirs:
+            if os.path.exists(sdir):
+                for fname in os.listdir(sdir):
+                    fpath = os.path.join(sdir, fname)
+                    if os.path.isfile(fpath) and any(fname.lower().endswith(ext) for ext in [".csv", ".json"]):
+                        if any(k in fname.lower() for k in ["pass", "login", "export", "credential"]):
+                            try:
+                                file_creds = cls.scrape_from_file(fpath)
+                                for fc in file_creds:
+                                    if fc.get("password") and fc["password"].strip():
+                                        results.append(fc)
+                            except Exception:
+                                pass
 
-        return True, results, f"Scraped {len(results)} credentials directly from local desktop browsers!"
+        # Deduplicate and ensure only entries WITH passwords remain
+        valid_results = []
+        seen = set()
+        for r in results:
+            pw = r.get("password", "").strip()
+            if not pw:
+                continue
+            key = (r.get("service", "").lower(), r.get("account", "").lower(), pw)
+            if key not in seen:
+                seen.add(key)
+                valid_results.append(r)
+
+        if not valid_results:
+            return False, [], "No credentials with saved passwords found in desktop browsers or computer files."
+
+        return True, valid_results, f"Scraped {len(valid_results)} credentials with passwords directly from local computer!"
+
 
 

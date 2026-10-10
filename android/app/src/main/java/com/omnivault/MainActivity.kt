@@ -152,10 +152,25 @@ fun OmniVaultApp(
     var desktopHost by remember { mutableStateOf("10.0.12.97") } // default subnet IP
     var isProcessingVision by remember { mutableStateOf(false) }
 
+    var downloadProgress by remember { mutableStateOf(-1) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf<VaultEntry?>(null) }
+
     val context = androidx.compose.ui.platform.LocalContext.current
     val updater = remember { MobileAppUpdater(context, "pharmacophobia/OmniVault") }
 
     val coroutineScope = rememberCoroutineScope()
+
+    // Auto-check for updates on launch
+    LaunchedEffect(Unit) {
+        try {
+            val info = updater.checkForUpdates()
+            if (info.updateAvailable) {
+                updateInfo = info
+                showUpdateDialog = true
+            }
+        } catch (e: Exception) {}
+    }
 
     // File scraper launcher (CSV, JSON, TXT)
     val fileScraperLauncher = rememberLauncherForActivityResult(
@@ -165,7 +180,7 @@ fun OmniVaultApp(
             coroutineScope.launch {
                 errorMessage = "Importing password export from phone storage..."
                 val imported = repository.importFromExportFile(uri)
-                errorMessage = if (imported > 0) "Imported $imported credentials from phone export!" else "No valid credentials found in selected file."
+                errorMessage = if (imported > 0) "Imported $imported credentials with passwords!" else "No valid credentials with passwords found in selected file."
             }
         }
     }
@@ -232,11 +247,11 @@ fun OmniVaultApp(
                         )
                     }
                     if (isUnlocked) {
-                        IconButton(onClick = { fileScraperLauncher.launch("*/*") }) {
-                            Icon(Icons.Default.FileDownload, contentDescription = "Import Stored Phone Passwords", tint = MaterialTheme.colorScheme.secondary)
+                        IconButton(onClick = { showScrapeDialog = true }) {
+                            Icon(Icons.Default.FileDownload, contentDescription = "Scrape & Import Stored Phone Passwords", tint = MaterialTheme.colorScheme.secondary)
                         }
                         IconButton(onClick = { showCleanEmptyDialog = true }) {
-                            Icon(Icons.Default.CleaningServices, contentDescription = "Delete Passwords with No Account Name", tint = Color(0xFFF38BA8))
+                            Icon(Icons.Default.CleaningServices, contentDescription = "Clean Incomplete Accounts", tint = Color(0xFFF38BA8))
                         }
                         IconButton(onClick = { showGenDialog = true }) {
                             Icon(Icons.Default.Casino, contentDescription = "Password Generator")
@@ -424,7 +439,7 @@ fun OmniVaultApp(
                         }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(filtered) { entry ->
+                            items(items = filtered, key = { it.id }) { entry ->
                                 CredentialCard(
                                     entry = entry,
                                     onCopyAccount = { onCopyToClipboard("Username", entry.account) },
@@ -440,7 +455,7 @@ fun OmniVaultApp(
                                         showAddDialog = true
                                     },
                                     onDelete = {
-                                        repository.deleteEntry(entry.id)
+                                        showDeleteConfirmDialog = entry
                                     }
                                 )
                             }
@@ -450,6 +465,33 @@ fun OmniVaultApp(
             }
 
             // Dialogs
+            if (showDeleteConfirmDialog != null) {
+                val target = showDeleteConfirmDialog!!
+                AlertDialog(
+                    onDismissRequest = { showDeleteConfirmDialog = null },
+                    icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                    title = { Text("Delete Credential?") },
+                    text = { Text("Permanently delete '${target.service}' (${target.account}) from your vault?") },
+                    confirmButton = {
+                        Button(
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            onClick = {
+                                val ok = repository.deleteEntry(target.id)
+                                if (ok) {
+                                    Toast.makeText(context, "Deleted ${target.service}", Toast.LENGTH_SHORT).show()
+                                }
+                                showDeleteConfirmDialog = null
+                            }
+                        ) {
+                            Text("Delete")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteConfirmDialog = null }) { Text("Cancel") }
+                    }
+                )
+            }
+
             if (showAddDialog) {
                 AddEditEntryDialog(
                     initialEntry = editingEntry,
@@ -478,44 +520,96 @@ fun OmniVaultApp(
                 )
             }
 
-            if (showCleanEmptyDialog) {
-                val emptyCount = repository.entries.count { it.account.trim().isEmpty() }
+            if (showScrapeDialog) {
                 AlertDialog(
-                    onDismissRequest = { showCleanEmptyDialog = false },
-                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null, tint = Color(0xFFF38BA8)) },
-                    title = { Text("Delete Passwords with No Account") },
+                    onDismissRequest = { showScrapeDialog = false },
+                    icon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = MaterialTheme.colorScheme.secondary) },
+                    title = { Text("Import Stored Passwords") },
                     text = {
-                        Text(
-                            if (emptyCount > 0)
-                                "Found $emptyCount credentials with no account name.\nAre you sure you want to delete all of them permanently?"
-                            else
-                                "No credentials with missing account names found."
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Import existing accounts and passwords stored on your phone:")
+                            Text("• Auto-Scan: searches Downloads and Documents for password export files (Chrome, Samsung Pass, Bitwarden, etc.)", fontSize = 12.sp, color = Color(0xFFA6ADC8))
+                            Text("• Pick File: choose a CSV or JSON file from any folder or Google Drive.", fontSize = 12.sp, color = Color(0xFFA6ADC8))
+                            Text("• Note: entries without passwords are automatically ignored.", fontSize = 12.sp, color = Color(0xFFA6E3A1))
+                        }
                     },
                     confirmButton = {
-                        if (emptyCount > 0) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Button(
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary, contentColor = Color(0xFF11111B)),
                                 onClick = {
-                                    val deleted = repository.deleteEntriesWithoutAccount()
-                                    errorMessage = "Deleted $deleted credentials with empty account names."
-                                    showCleanEmptyDialog = false
+                                    showScrapeDialog = false
+                                    coroutineScope.launch {
+                                        val count = repository.scanPhoneStorageForCredentials()
+                                        Toast.makeText(context, if (count > 0) "Imported $count passwords from phone storage!" else "No password export files found in Downloads/Documents. Select file manually.", Toast.LENGTH_LONG).show()
+                                    }
                                 }
                             ) {
-                                Text("Delete All $emptyCount")
+                                Text("🔍 Auto-Scan Phone Storage")
                             }
-                        } else {
-                            Button(onClick = { showCleanEmptyDialog = false }) {
-                                Text("OK")
+                            Button(
+                                onClick = {
+                                    showScrapeDialog = false
+                                    fileScraperLauncher.launch("*/*")
+                                }
+                            ) {
+                                Text("📁 Choose Export File (CSV / JSON)")
                             }
                         }
                     },
                     dismissButton = {
-                        if (emptyCount > 0) {
-                            TextButton(onClick = { showCleanEmptyDialog = false }) {
-                                Text("Cancel")
+                        TextButton(onClick = { showScrapeDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
+            if (showCleanEmptyDialog) {
+                val noPassCount = repository.entries.count { it.password.trim().isEmpty() }
+                val noAccCount = repository.entries.count { it.account.trim().isEmpty() }
+                AlertDialog(
+                    onDismissRequest = { showCleanEmptyDialog = false },
+                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null, tint = Color(0xFFF38BA8)) },
+                    title = { Text("Clean Incomplete Entries") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Found $noPassCount entries without passwords.")
+                            Text("Found $noAccCount entries without account names.")
+                            Text("Select which entries to permanently delete:")
+                        }
+                    },
+                    confirmButton = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (noPassCount > 0) {
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    onClick = {
+                                        val deleted = repository.deleteEntriesWithoutPassword()
+                                        Toast.makeText(context, "Deleted $deleted accounts with no passwords", Toast.LENGTH_LONG).show()
+                                        showCleanEmptyDialog = false
+                                    }
+                                ) {
+                                    Text("Delete No-Password Accounts ($noPassCount)")
+                                }
+                            }
+                            if (noAccCount > 0) {
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFAB387), contentColor = Color(0xFF11111B)),
+                                    onClick = {
+                                        val deleted = repository.deleteEntriesWithoutAccount()
+                                        Toast.makeText(context, "Deleted $deleted accounts with no username", Toast.LENGTH_LONG).show()
+                                        showCleanEmptyDialog = false
+                                    }
+                                ) {
+                                    Text("Delete No-Username Accounts ($noAccCount)")
+                                }
+                            }
+                            if (noPassCount == 0 && noAccCount == 0) {
+                                Button(onClick = { showCleanEmptyDialog = false }) { Text("OK (Nothing to clean)") }
                             }
                         }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCleanEmptyDialog = false }) { Text("Cancel") }
                     }
                 )
             }
@@ -524,10 +618,27 @@ fun OmniVaultApp(
                 InAppUpdateDialog(
                     appName = "OmniVault",
                     updateInfo = updateInfo!!,
+                    downloadProgress = downloadProgress,
+                    isDownloading = isDownloadingUpdate,
                     onDismiss = { showUpdateDialog = false },
-                    onInstallUpdate = {
-                        showUpdateDialog = false
-                        updater.downloadAndInstallApk(updateInfo!!)
+                    onStartDownload = {
+                        isDownloadingUpdate = true
+                        downloadProgress = 0
+                        coroutineScope.launch {
+                            val apk = updater.downloadApkWithProgress(updateInfo!!.downloadUrl) { pct ->
+                                downloadProgress = pct
+                            }
+                            isDownloadingUpdate = false
+                            if (apk != null && apk.exists()) {
+                                updater.installApk(apk)
+                            } else {
+                                Toast.makeText(context, "Download failed. Opening browser link...", Toast.LENGTH_LONG).show()
+                                updater.openInBrowserFallback(updateInfo!!.downloadUrl)
+                            }
+                        }
+                    },
+                    onOpenInBrowser = {
+                        updater.openInBrowserFallback(updateInfo!!.downloadUrl)
                     }
                 )
             }

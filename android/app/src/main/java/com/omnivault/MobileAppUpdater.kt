@@ -1,19 +1,18 @@
 package com.omnivault
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -27,6 +26,21 @@ data class AppUpdateInfo(
 )
 
 class MobileAppUpdater(private val context: Context, private val githubRepo: String) {
+
+    init {
+        cleanupOldApk()
+    }
+
+    fun cleanupOldApk() {
+        try {
+            val updateFile = File(context.cacheDir, "omnivault_update.apk")
+            if (updateFile.exists()) {
+                updateFile.delete()
+            }
+        } catch (e: Exception) {
+            // Ignore cleanup errors
+        }
+    }
 
     suspend fun checkForUpdates(currentVersionName: String = ""): AppUpdateInfo = withContext(Dispatchers.IO) {
         val curVer = if (currentVersionName.isNotEmpty()) {
@@ -44,7 +58,7 @@ class MobileAppUpdater(private val context: Context, private val githubRepo: Str
             val url = URL("https://api.github.com/repos/$githubRepo/releases/latest")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Android-App-Updater")
+            conn.setRequestProperty("User-Agent", "OmniVault-Android-Updater")
             conn.connectTimeout = 10000
             conn.readTimeout = 15000
 
@@ -53,7 +67,7 @@ class MobileAppUpdater(private val context: Context, private val githubRepo: Str
                 val responseStr = reader.use { it.readText() }
                 val json = JSONObject(responseStr)
                 val tag = json.optString("tag_name", "").removePrefix("v").trim()
-                val notes = json.optString("body", "New update available on GitHub.")
+                val notes = json.optString("body", "New release available on GitHub.")
                 var apkUrl = ""
 
                 val assets = json.optJSONArray("assets")
@@ -76,7 +90,7 @@ class MobileAppUpdater(private val context: Context, private val githubRepo: Str
 
                 val isNewer = isVersionNewer(tag, curClean)
                 return@withContext AppUpdateInfo(
-                    updateAvailable = isNewer,
+                    updateAvailable = isNewer || (tag.isNotEmpty() && tag != curClean),
                     currentVersion = curClean,
                     latestVersion = if (tag.isNotEmpty()) tag else curClean,
                     downloadUrl = apkUrl,
@@ -91,7 +105,7 @@ class MobileAppUpdater(private val context: Context, private val githubRepo: Str
             updateAvailable = false,
             currentVersion = curClean,
             latestVersion = curClean,
-            downloadUrl = "",
+            downloadUrl = "https://github.com/$githubRepo/raw/main/OmniVault.apk",
             releaseNotes = ""
         )
     }
@@ -109,72 +123,111 @@ class MobileAppUpdater(private val context: Context, private val githubRepo: Str
         return false
     }
 
-    fun downloadAndInstallApk(info: AppUpdateInfo) {
-        if (info.downloadUrl.isNotEmpty()) {
-            downloadAndInstallApk(info.downloadUrl)
+    suspend fun downloadApkWithProgress(
+        downloadUrl: String,
+        onProgress: (Int) -> Unit
+    ): File? = withContext(Dispatchers.IO) {
+        var currentUrl = downloadUrl
+        val destination = File(context.cacheDir, "omnivault_update.apk")
+        if (destination.exists()) destination.delete()
+
+        try {
+            var redirects = 0
+            while (redirects < 5) {
+                val url = URL(currentUrl)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("User-Agent", "OmniVault-Android-Updater")
+                conn.connectTimeout = 15000
+                conn.readTimeout = 30000
+                conn.connect()
+
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val newLoc = conn.getHeaderField("Location")
+                    if (newLoc != null) {
+                        currentUrl = newLoc
+                        redirects++
+                        continue
+                    }
+                }
+
+                if (code in 200..299) {
+                    val fileLength = conn.contentLength
+                    conn.inputStream.use { input ->
+                        FileOutputStream(destination).use { output ->
+                            val buffer = ByteArray(8192)
+                            var total: Long = 0
+                            var count: Int
+                            while (input.read(buffer).also { count = it } != -1) {
+                                total += count
+                                output.write(buffer, 0, count)
+                                if (fileLength > 0) {
+                                    val progress = ((total * 100) / fileLength).toInt()
+                                    withContext(Dispatchers.Main) {
+                                        onProgress(progress)
+                                    }
+                                }
+                            }
+                            output.flush()
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        onProgress(100)
+                    }
+                    return@withContext destination
+                } else {
+                    return@withContext null
+                }
+            }
+            null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 
-    fun downloadAndInstallApk(downloadUrl: String, fileName: String = "app-update.apk") {
+    fun installApk(file: File) {
+        if (!file.exists()) return
+
         try {
-            val destination = File(
-                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-                fileName
-            )
-            if (destination.exists()) destination.delete()
-
-            val request = DownloadManager.Request(Uri.parse(downloadUrl))
-                .setTitle("Downloading App Update")
-                .setDescription("Downloading latest release from GitHub...")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationUri(Uri.fromFile(destination))
-
-            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val downloadId = manager.enqueue(request)
-
-            val onComplete = object : BroadcastReceiver() {
-                override fun onReceive(ctxt: Context, intent: Intent) {
-                    val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-                    if (id == downloadId) {
-                        try {
-                            ctxt.unregisterReceiver(this)
-                        } catch (e: Exception) {}
-                        installApk(destination)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    val permIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
+                    context.startActivity(permIntent)
+                    Toast.makeText(context, "Please allow OmniVault to install updates, then return to complete install.", Toast.LENGTH_LONG).show()
                 }
             }
 
-            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(onComplete, filter, Context.RECEIVER_EXPORTED)
-            } else {
-                context.registerReceiver(onComplete, filter)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.provider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
 
+            context.startActivity(intent)
         } catch (e: Exception) {
             e.printStackTrace()
-            // Direct browser fallback if DownloadManager fails
-            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(browserIntent)
+            openInBrowserFallback("https://github.com/$githubRepo/raw/main/OmniVault.apk")
         }
     }
 
-    private fun installApk(file: File) {
-        if (!file.exists()) return
-
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.provider",
-            file
-        )
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+    fun openInBrowserFallback(url: String) {
+        try {
+            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(browserIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
-        context.startActivity(intent)
     }
 }

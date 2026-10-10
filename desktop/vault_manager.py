@@ -150,3 +150,11 @@ class VaultManager:
         if removed > 0:
             self.save_vault()
         return removed
+
+    def delete_entries_without_passwords(self) -> int:
+        initial_len = len(self.entries)
+        self.entries = [e for e in self.entries if e.get("password", "").strip()]
+        removed = initial_len - len(self.entries)
+        if removed > 0:
+            self.save_vault()
+        return removed
