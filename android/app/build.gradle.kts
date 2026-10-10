@@ -52,7 +52,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.3")
     implementation("androidx.core:core-ktx:1.13.1")
 
-    // Biometrics Authentication
+    // Biometrics Authentication & Modern Fragment support
+    implementation("androidx.fragment:fragment-ktx:1.7.1")
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     // Coroutines & Networking

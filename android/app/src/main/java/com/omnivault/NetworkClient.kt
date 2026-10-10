@@ -115,4 +115,42 @@ class NetworkClient(private val context: Context) {
             Pair(false, "Pico inject error: ${e.message}")
         }
     }
+
+    suspend fun scrapeDesktopBrowsers(serverHost: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val url = "http://$serverHost:8765/api/scrape/browsers"
+            val request = Request.Builder().url(url).post("{}".toRequestBody("application/json".toMediaType())).build()
+            client.newCall(request).execute().use { response ->
+                val respStr = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val json = JSONObject(respStr)
+                    val count = json.optInt("count", 0)
+                    Pair(true, "Successfully scraped $count browser credentials into Desktop Vault!")
+                } else {
+                    Pair(false, "Browser scrape error: HTTP ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            Pair(false, "Browser scrape error: ${e.message}")
+        }
+    }
+
+    suspend fun scrapeAdbPhone(serverHost: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val url = "http://$serverHost:8765/api/scrape/adb"
+            val request = Request.Builder().url(url).post("{}".toRequestBody("application/json".toMediaType())).build()
+            client.newCall(request).execute().use { response ->
+                val respStr = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val json = JSONObject(respStr)
+                    val count = json.optInt("count", 0)
+                    Pair(true, "Scraped $count mobile browser tabs and export files!")
+                } else {
+                    Pair(false, "Phone scrape error: HTTP ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            Pair(false, "Phone scrape error: ${e.message}")
+        }
+    }
 }

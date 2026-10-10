@@ -223,22 +223,173 @@ class PhoneDataScraper:
             find_res = subprocess.run(find_cmd, capture_output=True, text=True, timeout=5)
             candidate_files = [f.strip() for f in find_res.stdout.splitlines() if f.strip() and any(f.endswith(ext) for ext in [".csv", ".json", ".txt"])]
 
-            if not candidate_files:
-                return False, [], f"Connected to device {device_id}, but no exported password files (.csv, .json) found in Downloads or Documents folder. Export your passwords from Chrome/Browser to Downloads on your phone first."
-
             all_creds = []
-            import tempfile, os
-            for remote_file in candidate_files[:5]:
-                with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False) as tmp:
-                    tmp_path = tmp.name
-                try:
-                    subprocess.run(["adb", "-s", device_id, "pull", remote_file, tmp_path], capture_output=True, timeout=5)
-                    creds = cls.scrape_from_file(tmp_path)
-                    all_creds.extend(creds)
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
+            import tempfile, os, urllib.request, urllib.parse
 
-            return True, all_creds, f"Scraped {len(all_creds)} credentials directly from {len(candidate_files)} file(s) on your phone!"
+            if candidate_files:
+                for remote_file in candidate_files[:5]:
+                    with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False) as tmp:
+                        tmp_path = tmp.name
+                    try:
+                        subprocess.run(["adb", "-s", device_id, "pull", remote_file, tmp_path], capture_output=True, timeout=5)
+                        creds = cls.scrape_from_file(tmp_path)
+                        all_creds.extend(creds)
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+
+            # Also inspect live open tabs from Chrome DevTools Remote Debugging
+            try:
+                dt_port = 9338
+                dt_fwd = subprocess.run(["adb", "-s", device_id, "forward", f"tcp:{dt_port}", "localabstract:chrome_devtools_remote"], capture_output=True, text=True, timeout=3)
+                if dt_fwd.returncode == 0:
+                    try:
+                        req = urllib.request.Request(f"http://127.0.0.1:{dt_port}/json", headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=3) as resp:
+                            pages = json.loads(resp.read().decode())
+                            for p in pages:
+                                u = p.get("url", "")
+                                t = p.get("title", "")
+                                if not u or u.startswith("chrome://") or u.startswith("about:"):
+                                    continue
+                                d_match = re.search(r"https?://(?:www\.)?([^/:\?]+)", u)
+                                s_name = d_match.group(1).capitalize() if d_match else t
+                                e_match = re.search(r"[?&](?:Email|username|user|login)=([^&]+)", u, re.IGNORECASE)
+                                acc = urllib.parse.unquote(e_match.group(1)) if e_match else ""
+                                all_creds.append({
+                                    "service": s_name,
+                                    "account": acc,
+                                    "password": "",
+                                    "url": u,
+                                    "notes": f"Scraped from open mobile browser tab: {t}"
+                                })
+                    finally:
+                        subprocess.run(["adb", "-s", device_id, "forward", "--remove", f"tcp:{dt_port}"], capture_output=True)
+            except Exception:
+                pass
+
+            if not all_creds:
+                return False, [], f"Connected to device {device_id}, but no exported password files or active browser tabs found. Export passwords from your mobile browser into Downloads first."
+
+            return True, all_creds, f"Scraped {len(all_creds)} credentials and browser entries directly from phone ({device_id})!"
         except Exception as e:
             return False, [], f"ADB scrape error: {str(e)}"
+
+    @classmethod
+    def scrape_desktop_browsers(cls) -> Tuple[bool, List[Dict[str, str]], str]:
+        """
+        Scrapes credentials directly from installed desktop browsers:
+        - Chromium, Google Chrome, Brave, Edge, and other Chromium-based browsers
+        - Decrypts stored logins using Linux DPAPI/AES-128-CBC standard key
+        """
+        import os, glob, sqlite3, shutil, tempfile
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+            has_crypto = True
+        except ImportError:
+            has_crypto = False
+
+        results = []
+        home = os.path.expanduser("~")
+        
+        # Chromium search paths (native, snap, flatpak)
+        candidate_paths = [
+            f"{home}/.config/google-chrome/Default/Login Data",
+            f"{home}/.config/google-chrome/Profile */Login Data",
+            f"{home}/.config/chromium/Default/Login Data",
+            f"{home}/.config/chromium/Profile */Login Data",
+            f"{home}/.config/BraveSoftware/Brave-Browser/Default/Login Data",
+            f"{home}/.config/BraveSoftware/Brave-Browser/Profile */Login Data",
+            f"{home}/.config/microsoft-edge/Default/Login Data",
+            f"{home}/.var/app/org.chromium.Chromium/config/chromium/Default/Login Data",
+            f"{home}/snap/brave/*/.config/BraveSoftware/Brave-Browser/Default/Login Data",
+            f"{home}/snap/chromium/*/.config/chromium/Default/Login Data",
+            f"{home}/.config/google-voice-chromium/Default/Login Data",
+        ]
+
+        found_db_files = []
+        for pat in candidate_paths:
+            found_db_files.extend(glob.glob(pat))
+
+        # Remove duplicates
+        found_db_files = list(set(found_db_files))
+
+        def decrypt_chromium_pass(enc_bytes):
+            if not enc_bytes or not has_crypto:
+                return ""
+            if not enc_bytes.startswith(b"v10") and not enc_bytes.startswith(b"v11"):
+                try:
+                    return enc_bytes.decode("utf-8")
+                except Exception:
+                    return ""
+            
+            # Linux Chromium uses PBKDF2 with salt 'saltysalt', 1 iteration, password 'peanuts'
+            try:
+                kdf = PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b"saltysalt", iterations=1)
+                key = kdf.derive(b"peanuts")
+                cipher = Cipher(algorithms.AES(key), modes.CBC(b" " * 16))
+                dec = cipher.decryptor().update(enc_bytes[3:]) + cipher.decryptor().finalize()
+                pad_len = dec[-1]
+                if 1 <= pad_len <= 16:
+                    return dec[:-pad_len].decode("utf-8", errors="replace")
+                return dec.decode("utf-8", errors="replace")
+            except Exception:
+                return ""
+
+        for db_path in found_db_files:
+            if not os.path.exists(db_path):
+                continue
+            
+            # Copy SQLite DB to temp to avoid lock contention if browser is running
+            with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+                tmp_db = tmp.name
+            
+            try:
+                shutil.copy2(db_path, tmp_db)
+                conn = sqlite3.connect(tmp_db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
+                rows = cursor.fetchall()
+                conn.close()
+
+                # Infer browser name
+                browser_name = "Desktop Browser"
+                if "brave" in db_path.lower():
+                    browser_name = "Brave"
+                elif "chrome" in db_path.lower():
+                    browser_name = "Chrome"
+                elif "chromium" in db_path.lower():
+                    browser_name = "Chromium"
+                elif "edge" in db_path.lower():
+                    browser_name = "Edge"
+
+                for origin_url, username, pass_blob in rows:
+                    if not username and not pass_blob:
+                        continue
+                    
+                    plain_pass = decrypt_chromium_pass(pass_blob)
+                    # Extract domain for service name
+                    d_match = re.search(r"https?://(?:www\.)?([^/:\?]+)", origin_url or "")
+                    service_name = d_match.group(1).capitalize() if d_match else browser_name
+
+                    results.append({
+                        "service": service_name,
+                        "account": username or "",
+                        "password": plain_pass,
+                        "url": origin_url or "",
+                        "notes": f"Scraped from {browser_name} database ({os.path.basename(os.path.dirname(db_path))})"
+                    })
+            except Exception:
+                pass
+            finally:
+                if os.path.exists(tmp_db):
+                    os.unlink(tmp_db)
+
+        if not results:
+            return False, [], "No browser logins found or databases were empty. Make sure credentials are saved in your desktop browser or export them to CSV."
+
+        return True, results, f"Scraped {len(results)} credentials directly from local desktop browsers!"
+
+

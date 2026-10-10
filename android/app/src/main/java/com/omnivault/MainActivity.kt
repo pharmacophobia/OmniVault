@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -143,9 +144,15 @@ fun OmniVaultApp(
     var showGenDialog by remember { mutableStateOf(false) }
     var showSyncDialog by remember { mutableStateOf(false) }
     var showScrapeDialog by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<VaultEntry?>(null) }
     var desktopHost by remember { mutableStateOf("10.0.12.97") } // default subnet IP
     var isProcessingVision by remember { mutableStateOf(false) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val updater = remember { MobileAppUpdater(context, "pharmacophobia/OmniVault") }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -199,6 +206,30 @@ fun OmniVaultApp(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            if (!isCheckingUpdate) {
+                                isCheckingUpdate = true
+                                coroutineScope.launch {
+                                    try {
+                                        val info = updater.checkForUpdates()
+                                        updateInfo = info
+                                        showUpdateDialog = true
+                                    } catch (e: Exception) {
+                                        errorMessage = "Update check failed: ${e.message}"
+                                    } finally {
+                                        isCheckingUpdate = false
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.SystemUpdate,
+                            contentDescription = "Check for Updates",
+                            tint = if (isCheckingUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                     if (isUnlocked) {
                         IconButton(onClick = { fileScraperLauncher.launch("*/*") }) {
                             Icon(Icons.Default.FileDownload, contentDescription = "Import Stored Phone Passwords", tint = MaterialTheme.colorScheme.secondary)
@@ -434,6 +465,18 @@ fun OmniVaultApp(
                     onDismiss = { showSyncDialog = false }
                 )
             }
+
+            if (showUpdateDialog && updateInfo != null) {
+                InAppUpdateDialog(
+                    appName = "OmniVault",
+                    updateInfo = updateInfo!!,
+                    onDismiss = { showUpdateDialog = false },
+                    onInstallUpdate = {
+                        showUpdateDialog = false
+                        updater.downloadAndInstallApk(updateInfo!!)
+                    }
+                )
+            }
         }
     }
 }
@@ -648,35 +691,66 @@ fun SyncDesktopDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
-                scope.launch {
-                    statusText = "Pulling encrypted vault from Desktop..."
-                    val env = networkClient.pullVault(host)
-                    if (env != null) {
-                        val saved = repository.saveRemoteEnvelope(env, repository.activeMasterPassword)
-                        statusText = if (saved) "Synced vault successfully!" else "Vault received, but could not decrypt with active password."
-                    } else {
-                        statusText = "Sync failed. Check connection."
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        scope.launch {
+                            statusText = "Pulling encrypted vault from Desktop..."
+                            val env = networkClient.pullVault(host)
+                            if (env != null) {
+                                val saved = repository.saveRemoteEnvelope(env, repository.activeMasterPassword)
+                                statusText = if (saved) "Synced vault successfully!" else "Vault received, but could not decrypt with active password."
+                            } else {
+                                statusText = "Sync failed. Check connection."
+                            }
+                        }
+                    }) {
+                        Text("⬇ Pull Vault")
+                    }
+                    Button(onClick = {
+                        scope.launch {
+                            val env = repository.getEncryptedEnvelope()
+                            if (env != null) {
+                                statusText = "Pushing vault to Desktop..."
+                                val (ok, msg) = networkClient.pushVault(host, env)
+                                statusText = msg
+                            } else {
+                                statusText = "No local vault to push."
+                            }
+                        }
+                    }) {
+                        Text("⬆ Push Vault")
                     }
                 }
-            }) {
-                Text("Pull from Desktop")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA6E3A1), contentColor = Color(0xFF11111B)),
+                        onClick = {
+                            scope.launch {
+                                statusText = "Triggering browser scraper on desktop..."
+                                val (ok, msg) = networkClient.scrapeDesktopBrowsers(host)
+                                if (ok) {
+                                    val env = networkClient.pullVault(host)
+                                    if (env != null) {
+                                        repository.saveRemoteEnvelope(env, repository.activeMasterPassword)
+                                        statusText = "$msg (Imported & synced!)"
+                                    } else {
+                                        statusText = msg
+                                    }
+                                } else {
+                                    statusText = msg
+                                }
+                            }
+                        }
+                    ) {
+                        Text("🌐 Scrape Browsers", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         },
         dismissButton = {
-            Button(onClick = {
-                scope.launch {
-                    val env = repository.getEncryptedEnvelope()
-                    if (env != null) {
-                        statusText = "Pushing vault to Desktop..."
-                        val (ok, msg) = networkClient.pushVault(host, env)
-                        statusText = msg
-                    } else {
-                        statusText = "No local vault to push."
-                    }
-                }
-            }) {
-                Text("Push to Desktop")
+            TextButton(onClick = onDismiss) {
+                Text("Close")
             }
         }
     )

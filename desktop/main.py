@@ -224,14 +224,24 @@ class PhoneScraperDialog(QDialog):
         layout.addWidget(desc)
 
         btn_row = QHBoxLayout()
-        self.file_btn = QPushButton("📁 Select Export File (CSV / JSON)")
+        self.file_btn = QPushButton("📁 File (CSV/JSON)")
         self.file_btn.clicked.connect(self._select_file)
         btn_row.addWidget(self.file_btn)
 
-        self.adb_btn = QPushButton("🔌 Auto-Scan Phone via USB (ADB)")
-        self.adb_btn.setStyleSheet("background-color: #fab387; color: #11111b;")
+        self.desktop_browser_btn = QPushButton("💻 Scrape Desktop Browsers")
+        self.desktop_browser_btn.setStyleSheet("background-color: #a6e3a1; color: #11111b; font-weight: bold;")
+        self.desktop_browser_btn.clicked.connect(self._scan_desktop_browsers)
+        btn_row.addWidget(self.desktop_browser_btn)
+
+        self.adb_btn = QPushButton("🔌 Auto-Scan Phone (ADB)")
+        self.adb_btn.setStyleSheet("background-color: #fab387; color: #11111b; font-weight: bold;")
         self.adb_btn.clicked.connect(self._scan_adb)
         btn_row.addWidget(self.adb_btn)
+
+        self.browser_btn = QPushButton("🌐 Scrape Phone Chrome Tabs")
+        self.browser_btn.setStyleSheet("background-color: #89b4fa; color: #11111b; font-weight: bold;")
+        self.browser_btn.clicked.connect(self._scan_browser_tabs)
+        btn_row.addWidget(self.browser_btn)
         layout.addLayout(btn_row)
 
         layout.addWidget(QLabel("Or Paste Raw Export / Text Dump Here:"))
@@ -257,6 +267,24 @@ class PhoneScraperDialog(QDialog):
         layout.addLayout(action_row)
         self.scraped_entries = []
 
+    def _scan_desktop_browsers(self):
+        self.status_label.setText("Scanning local desktop browsers (Brave, Chrome, Chromium, Edge)...")
+        from phone_scraper import PhoneDataScraper
+        ok, entries, msg = PhoneDataScraper.scrape_desktop_browsers()
+        if ok and entries:
+            self.scraped_entries = entries
+            self.status_label.setText(msg)
+            preview = f"# Found {len(entries)} credentials across desktop browsers:\n"
+            for e in entries[:15]:
+                pw_preview = "***" if e.get("password") else "(No saved password)"
+                preview += f"- [{e['service']}] {e['account']} : {pw_preview} ({e['url']})\n"
+            if len(entries) > 15:
+                preview += f"...and {len(entries) - 15} more.\n"
+            self.text_input.setPlainText(preview)
+        else:
+            QMessageBox.information(self, "Browser Scrape", msg)
+            self.status_label.setText("No browser credentials found. Export them from browser settings if needed.")
+
     def _select_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Password Export File", "", "Supported Files (*.csv *.json *.txt);;All Files (*)"
@@ -275,10 +303,53 @@ class PhoneScraperDialog(QDialog):
         if ok and entries:
             self.scraped_entries = entries
             self.status_label.setText(msg)
-            self.text_input.setPlainText(f"# Found {len(entries)} credentials from connected phone!")
+            self.text_input.setPlainText(f"# Found {len(entries)} credentials and tabs from connected phone!")
         else:
             QMessageBox.information(self, "Phone Scan", msg)
             self.status_label.setText("No exported files found via ADB. Export to Downloads or pick file manually.")
+
+    def _scan_browser_tabs(self):
+        self.status_label.setText("Connecting to Android Chrome via DevTools...")
+        import subprocess, json, re, urllib.request, urllib.parse
+        port = 9339
+        try:
+            fwd = subprocess.run(["adb", "forward", f"tcp:{port}", "localabstract:chrome_devtools_remote"], capture_output=True, text=True, timeout=3)
+            if fwd.returncode != 0:
+                QMessageBox.warning(self, "Browser Scrape", "Failed to connect to mobile Chrome. Make sure Chrome is open on your phone and USB Debugging is authorized.")
+                return
+
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/json", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                pages = json.loads(resp.read().decode())
+
+            tab_entries = []
+            for p in pages:
+                u = p.get("url", "")
+                t = p.get("title", "")
+                if not u or u.startswith("chrome://") or u.startswith("about:"):
+                    continue
+                d_match = re.search(r"https?://(?:www\.)?([^/:\?]+)", u)
+                s_name = d_match.group(1).capitalize() if d_match else t
+                e_match = re.search(r"[?&](?:Email|username|user|login)=([^&]+)", u, re.IGNORECASE)
+                acc = urllib.parse.unquote(e_match.group(1)) if e_match else ""
+                tab_entries.append({
+                    "service": s_name,
+                    "account": acc,
+                    "password": "",
+                    "url": u,
+                    "notes": f"Scraped from open mobile browser tab: {t}"
+                })
+
+            if tab_entries:
+                self.scraped_entries = tab_entries
+                self.status_label.setText(f"Successfully scraped {len(tab_entries)} open sites/accounts from Android Chrome!")
+                self.text_input.setPlainText(f"# Scraped {len(tab_entries)} sites from open phone browser tabs:\n" + "\n".join([f"- {e['service']} ({e['account']}): {e['url']}" for e in tab_entries[:15]]) + f"\n...and {len(tab_entries)-15} more.")
+            else:
+                QMessageBox.information(self, "Browser Scrape", "Connected to Chrome, but no open website tabs were found.")
+        except Exception as e:
+            QMessageBox.critical(self, "Browser Scrape Error", f"Error scraping phone browser tabs: {e}")
+        finally:
+            subprocess.run(["adb", "forward", "--remove", f"tcp:{port}"], capture_output=True)
 
     def _do_import(self):
         if not self.scraped_entries:
@@ -406,6 +477,12 @@ class OmniVaultApp(QMainWindow):
         self.pw_gen_btn = QPushButton("🎲 Gen Password")
         self.pw_gen_btn.clicked.connect(self._open_pw_gen)
         toolbar_layout.addWidget(self.pw_gen_btn)
+
+        self.update_btn = QPushButton("🔄 Updates")
+        self.update_btn.setStyleSheet("background-color: #89b4fa; color: #11111b; font-weight: bold;")
+        self.update_btn.setToolTip("Check for updates from GitHub and update OmniVault directly from inside the app")
+        self.update_btn.clicked.connect(self._open_updater_dialog)
+        toolbar_layout.addWidget(self.update_btn)
 
         main_layout.addWidget(self.toolbar_widget)
         self.toolbar_widget.setEnabled(False)
@@ -623,6 +700,12 @@ class OmniVaultApp(QMainWindow):
                 self, "Import Successful",
                 f"Successfully imported {added} credentials from your phone into OmniVault!"
             )
+
+    def _open_updater_dialog(self):
+        from update_dialog import UpdateDialog
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dlg = UpdateDialog(self, repo_dir=repo_root, app_name="OmniVault", current_version="1.0.0")
+        dlg.exec()
 
     def _import_screenshot_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(

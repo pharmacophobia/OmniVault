@@ -148,6 +148,59 @@ class SyncServerHandler(http.server.BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 self._send_json(500, {"error": f"Import failed: {str(e)}"})
+
+        elif self.path == "/api/scrape/adb":
+            # Scrapes connected phone's browser tabs and export files via ADB
+            try:
+                from phone_scraper import PhoneDataScraper
+                ok, entries, msg = PhoneDataScraper.scrape_adb_phone()
+                if ok and entries:
+                    added_count = 0
+                    if self.vault_manager and self.vault_manager.is_unlocked:
+                        for item in entries:
+                            self.vault_manager.add_entry(
+                                service=item.get("service", "Browser Tab"),
+                                account=item.get("account", ""),
+                                password=item.get("password", ""),
+                                url=item.get("url", ""),
+                                notes=item.get("notes", "")
+                            )
+                            added_count += 1
+                    self._send_json(200, {
+                        "status": "success",
+                        "count": len(entries),
+                        "added_to_vault": added_count,
+                        "message": msg,
+                        "items": entries
+                    })
+        elif self.path == "/api/scrape/browsers":
+            # Scrapes local desktop browsers (Brave, Chrome, Chromium, Edge)
+            try:
+                from phone_scraper import PhoneDataScraper
+                ok, entries, msg = PhoneDataScraper.scrape_desktop_browsers()
+                if ok and entries:
+                    added_count = 0
+                    if self.vault_manager and self.vault_manager.is_unlocked:
+                        for item in entries:
+                            self.vault_manager.add_entry(
+                                service=item.get("service", "Browser Login"),
+                                account=item.get("account", ""),
+                                password=item.get("password", ""),
+                                url=item.get("url", ""),
+                                notes=item.get("notes", "")
+                            )
+                            added_count += 1
+                    self._send_json(200, {
+                        "status": "success",
+                        "count": len(entries),
+                        "added_to_vault": added_count,
+                        "message": msg,
+                        "items": entries
+                    })
+                else:
+                    self._send_json(400, {"status": "error", "message": msg})
+            except Exception as e:
+                self._send_json(500, {"error": f"Browser scrape failed: {str(e)}"})
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
