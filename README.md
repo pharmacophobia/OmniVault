@@ -53,10 +53,16 @@
 
 ### 1. Launch Desktop App
 
-```bash
-cd /home/k/OmniVault/desktop
-python3 main.py
-```
+- **Direct Launch via Script**:
+  ```bash
+  /home/k/OmniVault/run.sh
+  ```
+- **Desktop Shortcut / App Grid**:
+  Open your Applications menu or double-click the **OmniVault** icon on your Desktop.
+- **1-Click System Installer**:
+  ```bash
+  /home/k/OmniVault/install.sh
+  ```
 
 *Set a Master Password upon first launch. OmniVault will initialize your encrypted vault file at `~/.omnivault/vault.enc`.*
 

@@ -375,6 +375,9 @@ class OmniVaultApp(QMainWindow):
         self.sync_server.start()
 
         self.setWindowTitle("OmniVault - Secure Password Manager")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "omnivault.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.resize(1000, 680)
 
         self.setStyleSheet("""
@@ -840,6 +843,9 @@ class OmniVaultApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "omnivault.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     window = OmniVaultApp()
     window.show()
     sys.exit(app.exec())

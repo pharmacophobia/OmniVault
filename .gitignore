@@ -4,6 +4,8 @@ android/.gradle/
 android/local.properties
 .gradle/
 build/
+dist/
+*.spec
 __pycache__/
 *.pyc
 *.pyo
